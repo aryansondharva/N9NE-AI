@@ -473,6 +473,3 @@ Make sure your environment variables are configured in your hosting provider.
 
 Built for the 30 Days of AI Voice Agents challenge. Services: AssemblyAI, Google Gemini, Murf AI.
 
-#   N 9 N E  
- #   N 9 N E  
- 
