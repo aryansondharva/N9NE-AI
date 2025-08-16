@@ -5,45 +5,55 @@
 🧠 Integrations: Murf AI (TTS) + AssemblyAI (Transcription) + Gemini LLM
 ===============================================
 """
-from dotenv import load_dotenv
+import logging
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 from pydantic import BaseModel
-import os
+from io import BytesIO
 import requests
 import shutil
-import assemblyai as aai
-from io import BytesIO
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import StreamingResponse
-from dotenv import load_dotenv
-from io import BytesIO
-import requests
 import os
+import assemblyai as aai
 import json
-from pathlib import Path
 
-# ============================================================
-# 🔹 Load API Keys
-# ============================================================
+# Load environment variables
 load_dotenv()
+
+# Get API keys
 MURF_API_KEY = os.getenv("MURF_API_KEY")
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-print("✅ Loaded Murf API Key:", bool(MURF_API_KEY))
-print("✅ Loaded AssemblyAI Key:", bool(ASSEMBLYAI_API_KEY))
-print("✅ Loaded Gemini API Key:", bool(GEMINI_API_KEY))
 
 # Initialize AssemblyAI
 aai.settings.api_key = ASSEMBLYAI_API_KEY
 transcriber = aai.Transcriber()
 
-# ============================================================
-# 🔹 FastAPI App
-# ============================================================
+# Import router
+from app.routers.voice import router as voice_router
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Verify API keys
+MURF_API_KEY = os.getenv("MURF_API_KEY")
+ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+logger.info("✅ Loaded Murf API Key: %s", bool(MURF_API_KEY))
+logger.info("✅ Loaded AssemblyAI Key: %s", bool(ASSEMBLYAI_API_KEY))
+logger.info("✅ Loaded Gemini API Key: %s", bool(GEMINI_API_KEY))
+
+# Initialize FastAPI app
 app = FastAPI(title="N9NE AI Voice Agent")
 
 # Enable CORS
@@ -57,6 +67,13 @@ app.add_middleware(
 
 # Mount static frontend directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Include routers
+app.include_router(voice_router)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 @app.get("/")
 async def root():
