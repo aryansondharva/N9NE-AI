@@ -6,7 +6,7 @@
 ===============================================
 """
 import logging
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -78,6 +78,38 @@ if __name__ == "__main__":
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+# ============================================================
+# 🔹 Day 15: WebSocket Connection
+# ============================================================
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint that establishes a connection and echoes back messages.
+    This is the foundation for real-time communication between client and server.
+    """
+    await websocket.accept()
+    logger.info("🔌 WebSocket connection established")
+    
+    try:
+        while True:
+            # Wait for messages from the client
+            data = await websocket.receive_text()
+            logger.info(f"📨 Received message: {data}")
+            
+            # Echo the message back to the client
+            response = f"Server echo: {data}"
+            await websocket.send_text(response)
+            logger.info(f"📤 Sent echo response: {response}")
+            
+    except WebSocketDisconnect:
+        logger.info("🔌 WebSocket connection closed")
+    except Exception as e:
+        logger.error(f"❌ WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except:
+            pass
 
 # ============================================================
 # 🔹 Fallback audio utilities (Day 11)
