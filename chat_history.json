@@ -98,5 +98,89 @@
       "role": "assistant",
       "content": "Yes, Arian, I can hear you.  Hello!\n"
     }
+  ],
+  "b5d4579a-5b3f-4d8b-abfe-3cfe92236f9f": [
+    {
+      "role": "user",
+      "content": "Hello. I am arian. Can you hear me?"
+    },
+    {
+      "role": "assistant",
+      "content": "Yes, Arian, I can hear you.  Hello!\n"
+    }
+  ],
+  "24e5c6ff-d352-4b60-bc8d-867e66ce72ae": [
+    {
+      "role": "user",
+      "content": "Hello. I am Aryan. Can you hear me? If yes, then reply me."
+    },
+    {
+      "role": "assistant",
+      "content": "Yes, Aryan, I can hear you.  Hello!\n"
+    }
+  ],
+  "ec83db1a-a47f-4b1c-b802-aac2d5b5da5f": [
+    {
+      "role": "user",
+      "content": "Hello, I am Aryan. This Voice agent have an astral conversation with our AI voice engine. Simply speak and get intelligent conceptual response in real time."
+    },
+    {
+      "role": "assistant",
+      "content": "Okay, Aryan. I'm ready for our astral conversation.  Ask me anything.  I'll do my best to provide intelligent and conceptual responses in real time.\n"
+    }
+  ],
+  "35ac2e6c-0bdf-4fa7-aef9-957889b1029f": [
+    {
+      "role": "user",
+      "content": "Chat history. Latest transcription."
+    },
+    {
+      "role": "assistant",
+      "content": "Please provide me with the chat history you'd like me to transcribe.  I need the text of the conversation to be able to do this.\n"
+    },
+    {
+      "role": "assistant",
+      "content": "I'm having trouble connecting right now. Please try again in a moment."
+    }
+  ],
+  "3b3fa1e3-8e2d-4b52-8e67-d036e671b5af": [
+    {
+      "role": "assistant",
+      "content": "I'm having trouble connecting right now. Please try again in a moment."
+    },
+    {
+      "role": "user",
+      "content": "Nine Documentation, pricing, support."
+    },
+    {
+      "role": "assistant",
+      "content": "Please clarify your request.  \"Nine Documentation, pricing, support\" is too vague.  Are you looking for information on:\n\n* **A specific product or service called \"Nine\"?**  If so, please provide more details about what \"Nine\" refers to (e.g., Nine email client, a software application, a company, etc.).\n* **Nine different aspects of documentation, pricing, and support?** If so, please elaborate on what those nine aspects are.\n* **Documentation, pricing, and support for something related to the number nine?** This seems unlikely, but it's a possibility.\n\nTo help me understand your request and provide a helpful response, please be more specific.\n"
+    }
+  ],
+  "079b6cb4-3343-43d8-aa33-66248ba0bcea": [
+    {
+      "role": "user",
+      "content": "Hello. I am arian. How are you?"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello Arian! I am doing well, thank you for asking.  How are you today?\n"
+    }
+  ],
+  "7d6d7b0b-9323-40f2-9f18-baca9f76583f": [
+    {
+      "role": "user",
+      "content": "Hello. I am maria."
+    },
+    {
+      "role": "assistant",
+      "content": "Hello Maria!  How can I help you today?\n"
+    }
+  ],
+  "646be8b5-1626-4eb5-956d-2a4f41132960": [
+    {
+      "role": "assistant",
+      "content": "I'm having trouble connecting right now. Please try again in a moment."
+    }
   ]
 }

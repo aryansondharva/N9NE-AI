@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Day 20: Murf WebSocket Voice Agent | N9NE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .recording { 
+            animation: pulse 1.5s ease-in-out infinite;
+            background-color: #ef4444 !important;
+        }
+        .processing {
+            animation: spin 1s linear infinite;
+            background-color: #3b82f6 !important;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .base64-output {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .audio-status {
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .audio-status.playing {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: #10b981;
+        }
+        .audio-status.buffering {
+            background-color: rgba(245, 158, 11, 0.1);
+            color: #f59e0b;
+        }
+        .audio-status.idle {
+            background-color: rgba(107, 114, 128, 0.1);
+            color: #6b7280;
+        }
+        .murf-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .murf-connected { background-color: #10b981; }
+        .murf-disconnected { background-color: #ef4444; }
+        .murf-connecting { 
+            background-color: #f59e0b; 
+            animation: pulse 1s infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                        <i class="fas fa-microphone-alt text-blue-600 mr-2"></i>
+                        Day 20: Murf WebSocket Voice Agent
+                    </h1>
+                    <p class="text-gray-600">LLM Streaming → Murf WebSocket → Base64 Audio</p>
+                </div>
+                <div class="text-right">
+                    <div class="flex items-center gap-4 mb-2">
+                        <div class="flex items-center">
+                            <div id="websocket-dot" class="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
+                            <span id="websocket-status" class="text-sm text-gray-600">WebSocket: Disconnected</span>
+                        </div>
+                        <div class="flex items-center">
+                            <div id="murf-dot" class="murf-status murf-disconnected"></div>
+                            <span id="murf-status" class="text-sm text-gray-600">Murf: Disconnected</span>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                        Context ID: <span id="context-id" class="font-mono">Not connected</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Left Column: Controls & Conversation -->
+            <div class="space-y-6">
+                <!-- Controls -->
+                <div class="bg-white rounded-lg shadow-md p-6 text-center">
+                    <button id="record-btn" 
+                            class="w-20 h-20 bg-red-500 hover:bg-red-600 text-white rounded-full text-2xl mb-4 disabled:opacity-50 transition-all duration-200">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <div>
+                        <p id="status-text" class="text-lg font-medium">Click to start recording</p>
+                        <p id="status-detail" class="text-sm text-gray-500">Speak to test Murf WebSocket integration</p>
+                        
+                        <!-- Audio Status Indicator -->
+                        <div id="audio-status" class="audio-status idle mt-4 hidden">
+                            <i class="fas fa-volume-up"></i>
+                            <span>Audio ready</span>
+                        </div>
+                        
+                        <!-- Buffer Status -->
+                        <div class="w-full bg-gray-200 rounded-full h-2.5 mt-4">
+                            <div id="buffer-indicator" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-1 flex justify-between">
+                            <span id="buffer-text">Buffering: 0%</span>
+                            <span id="chunk-count">Chunks: 0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Conversation -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-comments text-blue-600 mr-2"></i>
+                        Conversation
+                    </h2>
+                    <div id="messages" class="space-y-3 max-h-96 overflow-y-auto">
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-robot text-3xl mb-2"></i>
+                            <p>Start speaking to see the conversation...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Live transcription -->
+                    <div id="live-transcription" class="mt-4 p-3 bg-blue-50 rounded-lg hidden">
+                        <div class="flex items-center gap-2 mb-1">
+                            <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                            <span class="text-sm font-medium text-blue-700">Live Transcription</span>
+                        </div>
+                        <p id="live-text" class="text-gray-700"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Murf WebSocket Output -->
+            <div class="space-y-6">
+                <!-- Murf Status -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-satellite-dish text-green-600 mr-2"></i>
+                        Murf WebSocket Status
+                    </h2>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Connection:</span>
+                            <span id="murf-connection-status" class="text-sm font-medium text-red-600">Disconnected</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Audio Chunks Received:</span>
+                            <span id="audio-chunks-count" class="text-sm font-medium text-blue-600">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Total Audio Length:</span>
+                            <span id="total-audio-length" class="text-sm font-medium text-purple-600">0 chars</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Voice ID:</span>
+                            <span class="text-sm font-medium text-gray-800">en-US-natalie</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Base64 Audio Output -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-code text-yellow-600 mr-2"></i>
+                        Base64 Audio Output
+                        <button id="clear-output" class="ml-auto text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">
+                            Clear
+                        </button>
+                    </h2>
+                    <div id="base64-output" class="base64-output">
+                        [Waiting for audio data from Murf WebSocket...]
+                    </div>
+                </div>
+
+                <!-- LLM Streaming Status -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-brain text-indigo-600 mr-2"></i>
+                        LLM Streaming Status
+                    </h2>
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Chunks Sent to Murf:</span>
+                            <span id="llm-chunks-sent" class="text-sm font-medium text-green-600">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Current Response:</span>
+                            <span id="llm-status" class="text-sm font-medium text-gray-600">Idle</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Panel -->
+        <div class="mt-6">
+            <button id="debug-toggle" class="text-sm text-gray-500 hover:text-gray-700 flex items-center">
+                <i class="fas fa-bug mr-2"></i>Show Debug Console
+            </button>
+            <div id="debug-panel" class="hidden mt-4 bg-black text-green-400 p-4 rounded-lg text-xs max-h-40 overflow-y-auto font-mono">
+                <div id="debug-content">[Debug Console Ready]<br></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class Day20MurfWebSocketAgent {
+            constructor() {
+                this.websocket = null;
+                this.mediaRecorder = null;
+                this.audioStream = null;
+                this.isRecording = false;
+                this.isConnected = false;
+                this.audioChunksReceived = 0;
+                this.totalAudioLength = 0;
+                this.llmChunksSent = 0;
+                this.audioQueue = [];
+                this.isPlayingAudio = false;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.connectWebSocket();
+            }
+            
+            initializeElements() {
+                // Control elements
+                this.recordBtn = document.getElementById('record-btn');
+                this.statusText = document.getElementById('status-text');
+                this.statusDetail = document.getElementById('status-detail');
+                
+                // Status elements
+                this.websocketDot = document.getElementById('websocket-dot');
+                this.websocketStatus = document.getElementById('websocket-status');
+                this.murfDot = document.getElementById('murf-dot');
+                this.murfStatus = document.getElementById('murf-status');
+                this.contextId = document.getElementById('context-id');
+                
+                // Conversation elements
+                this.messages = document.getElementById('messages');
+                this.liveTranscription = document.getElementById('live-transcription');
+                this.liveText = document.getElementById('live-text');
+                
+                // Murf output elements
+                this.murfConnectionStatus = document.getElementById('murf-connection-status');
+                this.audioChunksCount = document.getElementById('audio-chunks-count');
+                this.totalAudioLengthEl = document.getElementById('total-audio-length');
+                this.base64Output = document.getElementById('base64-output');
+                this.clearOutputBtn = document.getElementById('clear-output');
+                
+                // LLM elements
+                this.llmChunksSentEl = document.getElementById('llm-chunks-sent');
+                this.llmStatus = document.getElementById('llm-status');
+                
+                // Debug elements
+                this.debugPanel = document.getElementById('debug-panel');
+                this.debugContent = document.getElementById('debug-content');
+            }
+            
+            setupEventListeners() {
+                this.recordBtn.addEventListener('click', () => this.toggleRecording());
+                this.clearOutputBtn.addEventListener('click', () => this.clearBase64Output());
+                document.getElementById('debug-toggle').addEventListener('click', () => {
+                    this.debugPanel.classList.toggle('hidden');
+                });
+            }
+            
+            connectWebSocket() {
+                const wsUrl = `ws://localhost:8000/ws`;
+                this.log(`🔌 Connecting to WebSocket: ${wsUrl}`);
+                
+                this.websocket = new WebSocket(wsUrl);
+                
+                this.websocket.onopen = () => {
+                    this.isConnected = true;
+                    this.updateWebSocketStatus(true);
+                    this.log('✅ WebSocket connected');
+                    this.updateStatus('Connected', 'Ready to record');
+                };
+                
+                this.websocket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleMessage(data);
+                    } catch (e) {
+                        // Handle plain text messages
+                        this.log(`📨 Text message: ${event.data}`);
+                        if (event.data.includes('transcription session started')) {
+                            this.updateStatus('Recording...', 'Speak now - streaming to Murf');
+                        }
+                    }
+                };
+                
+                this.websocket.onclose = () => {
+                    this.isConnected = false;
+                    this.updateWebSocketStatus(false);
+                    this.log('❌ WebSocket disconnected');
+                    this.updateStatus('Disconnected', 'Reconnecting...');
+                    setTimeout(() => this.connectWebSocket(), 3000);
+                };
+                
+                this.websocket.onerror = (error) => {
+                    this.log(`❌ WebSocket error: ${error}`);
+                    this.updateStatus('Error', 'Connection failed');
+                };
+            }
+            
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'transcription':
+                        if (data.message_type === 'PartialTranscript') {
+                            this.showLiveTranscription(data.text);
+                        } else if (data.message_type === 'FinalTranscript') {
+                            this.hideLiveTranscription();
+                            this.addMessage('user', data.text);
+                        }
+                        break;
+                        
+                    case 'turn_detection':
+                        this.addMessage('system', '🔄 Turn detected - LLM processing...');
+                        this.llmStatus.textContent = 'Processing';
+                        this.llmChunksSent = 0;
+                        this.updateLLMStats();
+                        break;
+                        
+                    case 'murf_connected':
+                        this.updateMurfStatus('connected');
+                        this.contextId.textContent = data.context_id || 'Unknown';
+                        this.log('✅ Murf WebSocket connected');
+                        break;
+                        
+                    case 'murf_disconnected':
+                        this.updateMurfStatus('disconnected');
+                        this.log('❌ Murf WebSocket disconnected');
+                        break;
+                        
+                    case 'murf_audio':
+                        this.handleMurfAudio(data.base64_audio);
+                        break;
+                        
+                    case 'llm_chunk_sent':
+                        this.llmChunksSent++;
+                        this.updateLLMStats();
+                        this.llmStatus.textContent = 'Streaming to Murf';
+                        break;
+                        
+                    case 'llm_complete':
+                        this.llmStatus.textContent = 'Complete';
+                        this.addMessage('system', '✅ LLM response sent to Murf - waiting for audio...');
+                        break;
+                }
+            }
+            
+            handleMurfAudio(base64Audio) {
+                this.audioChunksReceived++;
+                this.totalAudioLength += base64Audio.length;
+                
+                // Update stats
+                this.audioChunksCount.textContent = this.audioChunksReceived;
+                this.totalAudioLengthEl.textContent = `${this.totalAudioLength.toLocaleString()} chars`;
+                
+                // Add to base64 output
+                const timestamp = new Date().toLocaleTimeString();
+                const output = `[${timestamp}] MURF AUDIO CHUNK ${this.audioChunksReceived}:\n${base64Audio}\n\n`;
+                this.base64Output.textContent += output;
+                this.base64Output.scrollTop = this.base64Output.scrollHeight;
+                
+                // Log
+                this.log(`🎵 Received Murf audio chunk ${this.audioChunksReceived}: ${base64Audio.length} chars`);
+                
+                // Add system message
+                this.addMessage('system', `🎵 Received audio chunk ${this.audioChunksReceived} (${base64Audio.length} chars)`);
+
+                // Queue and play audio
+                this.audioQueue.push(base64Audio);
+                if (!this.isPlayingAudio) {
+                    this.playNextAudioChunk();
+                }
+            }
+            
+            async toggleRecording() {
+                if (!this.isConnected) {
+                    alert('WebSocket not connected to server');
+                    return;
+                }
+                
+                if (this.isRecording) {
+                    await this.stopRecording();
+                } else {
+                    await this.startRecording();
+                }
+            }
+            
+            async startRecording() {
+                try {
+                    this.audioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: { sampleRate: 16000, channelCount: 1 } 
+                    });
+                    
+                    this.mediaRecorder = new MediaRecorder(this.audioStream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0 && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(event.data);
+                        }
+                    };
+                    
+                    this.websocket.send('start_recording');
+                    this.mediaRecorder.start(100);
+                    
+                    this.isRecording = true;
+                    this.recordBtn.classList.add('recording');
+                    this.recordBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    this.updateStatus('Recording...', 'Speak now - will stream to Murf');
+                    
+                } catch (error) {
+                    this.log(`❌ Recording error: ${error}`);
+                    alert('Could not access microphone');
+                }
+            }
+            
+            async stopRecording() {
+                if (this.mediaRecorder) {
+                    this.mediaRecorder.stop();
+                }
+                if (this.audioStream) {
+                    this.audioStream.getTracks().forEach(track => track.stop());
+                }
+                
+                this.websocket.send('stop_recording');
+                
+                this.isRecording = false;
+                this.recordBtn.classList.remove('recording');
+                this.recordBtn.classList.add('processing');
+                this.recordBtn.innerHTML = '<i class="fas fa-cog"></i>';
+                this.updateStatus('Processing...', 'LLM → Murf WebSocket → Base64 Audio');
+                
+                setTimeout(() => {
+                    this.recordBtn.classList.remove('processing');
+                    this.recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    this.updateStatus('Ready', 'Click to record again');
+                }, 3000);
+            }
+            
+            updateWebSocketStatus(connected) {
+                if (connected) {
+                    this.websocketDot.className = 'w-3 h-3 bg-green-500 rounded-full mr-2';
+                    this.websocketStatus.textContent = 'WebSocket: Connected';
+                } else {
+                    this.websocketDot.className = 'w-3 h-3 bg-red-500 rounded-full mr-2';
+                    this.websocketStatus.textContent = 'WebSocket: Disconnected';
+                }
+            }
+            
+            updateMurfStatus(status) {
+                switch(status) {
+                    case 'connected':
+                        this.murfDot.className = 'murf-status murf-connected';
+                        this.murfStatus.textContent = 'Murf: Connected';
+                        this.murfConnectionStatus.textContent = 'Connected';
+                        this.murfConnectionStatus.className = 'text-sm font-medium text-green-600';
+                        break;
+                    case 'connecting':
+                        this.murfDot.className = 'murf-status murf-connecting';
+                        this.murfStatus.textContent = 'Murf: Connecting';
+                        this.murfConnectionStatus.textContent = 'Connecting';
+                        this.murfConnectionStatus.className = 'text-sm font-medium text-yellow-600';
+                        break;
+                    default:
+                        this.murfDot.className = 'murf-status murf-disconnected';
+                        this.murfStatus.textContent = 'Murf: Disconnected';
+                        this.murfConnectionStatus.textContent = 'Disconnected';
+                        this.murfConnectionStatus.className = 'text-sm font-medium text-red-600';
+                }
+            }
+            
+            updateLLMStats() {
+                this.llmChunksSentEl.textContent = this.llmChunksSent;
+            }
+            
+            updateStatus(main, detail) {
+                this.statusText.textContent = main;
+                this.statusDetail.textContent = detail;
+            }
+            
+            showLiveTranscription(text) {
+                this.liveTranscription.classList.remove('hidden');
+                this.liveText.textContent = text;
+            }
+            
+            hideLiveTranscription() {
+                this.liveTranscription.classList.add('hidden');
+            }
+            
+            addMessage(type, content) {
+                const placeholder = this.messages.querySelector('.text-center');
+                if (placeholder) placeholder.remove();
+                
+                const messageDiv = document.createElement('div');
+                const isUser = type === 'user';
+                const isSystem = type === 'system';
+                
+                messageDiv.className = `p-3 rounded-lg ${
+                    isUser ? 'bg-blue-500 text-white ml-auto max-w-xs' : 
+                    isSystem ? 'bg-yellow-100 text-yellow-800 text-center text-sm' :
+                    'bg-gray-100 text-gray-800 max-w-xs'
+                }`;
+                
+                const icon = isUser ? 'user' : isSystem ? 'cog' : 'robot';
+                messageDiv.innerHTML = `
+                    <div class="flex items-start gap-2">
+                        ${!isSystem ? `<i class="fas fa-${icon} mt-1"></i>` : ''}
+                        <div class="flex-1">
+                            <p>${content}</p>
+                            <div class="text-xs opacity-70 mt-1">${new Date().toLocaleTimeString()}</div>
+                        </div>
+                    </div>
+                `;
+                
+                this.messages.appendChild(messageDiv);
+                this.messages.scrollTop = this.messages.scrollHeight;
+            }
+            
+            clearBase64Output() {
+                this.base64Output.textContent = '[Base64 output cleared - waiting for new audio data...]';
+                this.audioChunksReceived = 0;
+                this.totalAudioLength = 0;
+                this.audioChunksCount.textContent = '0';
+                this.totalAudioLengthEl.textContent = '0 chars';
+            }
+            
+            log(message) {
+                console.log(message);
+                const timestamp = new Date().toLocaleTimeString();
+                this.debugContent.innerHTML += `[${timestamp}] ${message}<br>`;
+                this.debugContent.scrollTop = this.debugContent.scrollHeight;
+            }
+
+            playNextAudioChunk() {
+                if (this.audioQueue.length === 0) {
+                    this.isPlayingAudio = false;
+                    return;
+                }
+
+                this.isPlayingAudio = true;
+                const base64Audio = this.audioQueue.shift();
+
+                try {
+                    const audioBlob = this.base64ToBlob(base64Audio, 'audio/mp3');
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audio = new Audio(audioUrl);
+                    
+                    audio.onended = () => {
+                        URL.revokeObjectURL(audioUrl);
+                        this.playNextAudioChunk();
+                    };
+                    
+                    audio.onerror = (e) => {
+                        this.log(`❌ Audio playback error: ${e.message}`);
+                        this.playNextAudioChunk(); // Try next chunk
+                    };
+
+                    audio.play().catch(e => {
+                        this.log(`❌ Audio play() failed: ${e.message}. User interaction might be required.`)
+                        // In some browsers, audio can't play without user interaction.
+                        // We will continue processing the queue anyway.
+                        this.playNextAudioChunk();
+                    });
+
+                } catch (error) {
+                    this.log(`❌ Error processing audio chunk: ${error.message}`);
+                    this.playNextAudioChunk();
+                }
+            }
+
+            base64ToBlob(base64, contentType = '', sliceSize = 512) {
+                const byteCharacters = atob(base64);
+                const byteArrays = [];
+
+                for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+                    const slice = byteCharacters.slice(offset, offset + sliceSize);
+                    const byteNumbers = new Array(slice.length);
+                    for (let i = 0; i < slice.length; i++) {
+                        byteNumbers[i] = slice.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    byteArrays.push(byteArray);
+                }
+
+                return new Blob(byteArrays, { type: contentType });
+            }
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new Day20MurfWebSocketAgent();
+        });
+    </script>
+</body>
+</html>

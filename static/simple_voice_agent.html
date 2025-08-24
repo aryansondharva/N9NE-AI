@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N9NE - Day 20: Murf WebSocket Voice Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .recording { 
+            animation: pulse 1.5s ease-in-out infinite;
+            background-color: #ef4444 !important;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h1 class="text-2xl font-bold text-gray-800 mb-2">N9NE Voice Agent</h1>
+            <div class="flex items-center gap-2">
+                <div id="status-dot" class="w-3 h-3 bg-red-500 rounded-full"></div>
+                <span id="connection-status" class="text-sm text-gray-600">Disconnected</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6 text-center">
+            <button id="record-btn" 
+                    class="w-20 h-20 bg-red-500 hover:bg-red-600 text-white rounded-full text-2xl mb-4 disabled:opacity-50">
+                <i class="fas fa-microphone"></i>
+            </button>
+            <div>
+                <p id="status-text" class="text-lg font-medium">Click to start recording</p>
+                <p id="status-detail" class="text-sm text-gray-500">Make sure server is running</p>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-lg font-semibold mb-4">Conversation</h2>
+            <div id="messages" class="space-y-3 max-h-96 overflow-y-auto">
+                <div class="text-center text-gray-500 py-8">
+                    <i class="fas fa-comments text-3xl mb-2"></i>
+                    <p>Your conversation will appear here...</p>
+                </div>
+            </div>
+            
+            <!-- Live transcription -->
+            <div id="live-transcription" class="mt-4 p-3 bg-blue-50 rounded-lg hidden">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                    <span class="text-sm font-medium text-blue-700">Live</span>
+                </div>
+                <p id="live-text" class="text-gray-700"></p>
+            </div>
+        </div>
+
+        <!-- Debug -->
+        <div class="mt-4">
+            <button id="debug-toggle" class="text-sm text-gray-500 hover:text-gray-700">
+                <i class="fas fa-bug mr-1"></i>Show Debug
+            </button>
+            <div id="debug-panel" class="hidden mt-2 bg-black text-white p-4 rounded-lg text-xs max-h-32 overflow-y-auto">
+                <div id="debug-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class SimpleVoiceAgent {
+            constructor() {
+                this.websocket = null;
+                this.mediaRecorder = null;
+                this.audioStream = null;
+                this.isRecording = false;
+                this.isConnected = false;
+                
+                this.recordBtn = document.getElementById('record-btn');
+                this.statusText = document.getElementById('status-text');
+                this.statusDetail = document.getElementById('status-detail');
+                this.statusDot = document.getElementById('status-dot');
+                this.connectionStatus = document.getElementById('connection-status');
+                this.messages = document.getElementById('messages');
+                this.liveTranscription = document.getElementById('live-transcription');
+                this.liveText = document.getElementById('live-text');
+                this.debugPanel = document.getElementById('debug-panel');
+                this.debugContent = document.getElementById('debug-content');
+                
+                this.setupEventListeners();
+                this.connectWebSocket();
+            }
+            
+            setupEventListeners() {
+                this.recordBtn.addEventListener('click', () => this.toggleRecording());
+                document.getElementById('debug-toggle').addEventListener('click', () => {
+                    this.debugPanel.classList.toggle('hidden');
+                });
+            }
+            
+            connectWebSocket() {
+                const wsUrl = `ws://localhost:8000/ws`;
+                this.log(`Connecting to: ${wsUrl}`);
+                
+                this.websocket = new WebSocket(wsUrl);
+                
+                this.websocket.onopen = () => {
+                    this.isConnected = true;
+                    this.updateConnectionStatus(true);
+                    this.log('WebSocket connected');
+                    this.updateStatus('Connected', 'Ready to record');
+                };
+                
+                this.websocket.onmessage = (event) => {
+                    this.log(`Received: ${event.data}`);
+                    
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleMessage(data);
+                    } catch (e) {
+                        // Handle plain text messages
+                        if (event.data.includes('transcription session started')) {
+                            this.updateStatus('Recording...', 'Speak now');
+                        }
+                    }
+                };
+                
+                this.websocket.onclose = () => {
+                    this.isConnected = false;
+                    this.updateConnectionStatus(false);
+                    this.log('WebSocket disconnected');
+                    this.updateStatus('Disconnected', 'Reconnecting...');
+                    setTimeout(() => this.connectWebSocket(), 3000);
+                };
+                
+                this.websocket.onerror = (error) => {
+                    this.log(`WebSocket error: ${error}`);
+                    this.updateStatus('Error', 'Connection failed');
+                };
+            }
+            
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'transcription':
+                        if (data.message_type === 'PartialTranscript') {
+                            this.showLiveTranscription(data.text);
+                        } else if (data.message_type === 'FinalTranscript') {
+                            this.hideLiveTranscription();
+                            this.addMessage('user', data.text);
+                        }
+                        break;
+                    case 'turn_detection':
+                        this.addMessage('system', '🔄 Turn detected - AI responding...');
+                        break;
+                    case 'llm_response':
+                        if (data.chunk) {
+                            this.updateLLMMessage(data.chunk, data.is_complete);
+                        }
+                        break;
+                }
+            }
+            
+            async toggleRecording() {
+                if (!this.isConnected) {
+                    alert('Not connected to server');
+                    return;
+                }
+                
+                if (this.isRecording) {
+                    await this.stopRecording();
+                } else {
+                    await this.startRecording();
+                }
+            }
+            
+            async startRecording() {
+                try {
+                    this.audioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: { sampleRate: 16000, channelCount: 1 } 
+                    });
+                    
+                    this.mediaRecorder = new MediaRecorder(this.audioStream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0 && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(event.data);
+                        }
+                    };
+                    
+                    this.websocket.send('start_recording');
+                    this.mediaRecorder.start(100);
+                    
+                    this.isRecording = true;
+                    this.recordBtn.classList.add('recording');
+                    this.recordBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    this.updateStatus('Recording...', 'Click to stop');
+                    
+                } catch (error) {
+                    this.log(`Recording error: ${error}`);
+                    alert('Could not access microphone');
+                }
+            }
+            
+            async stopRecording() {
+                if (this.mediaRecorder) {
+                    this.mediaRecorder.stop();
+                }
+                if (this.audioStream) {
+                    this.audioStream.getTracks().forEach(track => track.stop());
+                }
+                
+                this.websocket.send('stop_recording');
+                
+                this.isRecording = false;
+                this.recordBtn.classList.remove('recording');
+                this.recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                this.updateStatus('Processing...', 'Generating response');
+            }
+            
+            updateConnectionStatus(connected) {
+                if (connected) {
+                    this.statusDot.className = 'w-3 h-3 bg-green-500 rounded-full';
+                    this.connectionStatus.textContent = 'Connected';
+                } else {
+                    this.statusDot.className = 'w-3 h-3 bg-red-500 rounded-full';
+                    this.connectionStatus.textContent = 'Disconnected';
+                }
+            }
+            
+            updateStatus(main, detail) {
+                this.statusText.textContent = main;
+                this.statusDetail.textContent = detail;
+            }
+            
+            showLiveTranscription(text) {
+                this.liveTranscription.classList.remove('hidden');
+                this.liveText.textContent = text;
+            }
+            
+            hideLiveTranscription() {
+                this.liveTranscription.classList.add('hidden');
+            }
+            
+            addMessage(type, content) {
+                const placeholder = this.messages.querySelector('.text-center');
+                if (placeholder) placeholder.remove();
+                
+                const messageDiv = document.createElement('div');
+                const isUser = type === 'user';
+                const isSystem = type === 'system';
+                
+                messageDiv.className = `p-3 rounded-lg ${
+                    isUser ? 'bg-blue-500 text-white ml-auto max-w-xs' : 
+                    isSystem ? 'bg-yellow-100 text-yellow-800 text-center text-sm' :
+                    'bg-gray-100 text-gray-800 max-w-xs'
+                }`;
+                
+                messageDiv.innerHTML = `
+                    <div class="flex items-start gap-2">
+                        ${!isSystem ? `<i class="fas fa-${isUser ? 'user' : 'robot'} mt-1"></i>` : ''}
+                        <div>
+                            <p>${content}</p>
+                            <div class="text-xs opacity-70 mt-1">${new Date().toLocaleTimeString()}</div>
+                        </div>
+                    </div>
+                `;
+                
+                this.messages.appendChild(messageDiv);
+                this.messages.scrollTop = this.messages.scrollHeight;
+            }
+            
+            updateLLMMessage(chunk, isComplete) {
+                let llmMessage = this.messages.querySelector('.llm-streaming');
+                
+                if (!llmMessage) {
+                    this.addMessage('assistant', '');
+                    llmMessage = this.messages.lastElementChild;
+                    llmMessage.classList.add('llm-streaming');
+                    llmMessage.querySelector('p').textContent = '';
+                }
+                
+                const contentP = llmMessage.querySelector('p');
+                contentP.textContent += chunk;
+                
+                if (isComplete) {
+                    llmMessage.classList.remove('llm-streaming');
+                    this.updateStatus('Ready', 'Click to record');
+                }
+                
+                this.messages.scrollTop = this.messages.scrollHeight;
+            }
+            
+            log(message) {
+                console.log(message);
+                const timestamp = new Date().toLocaleTimeString();
+                this.debugContent.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+                this.debugContent.scrollTop = this.debugContent.scrollHeight;
+            }
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new SimpleVoiceAgent();
+        });
+    </script>
+</body>
+</html>

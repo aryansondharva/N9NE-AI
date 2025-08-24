@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Day 21: Streaming Audio Data to Client | N9NE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .recording { 
+            animation: pulse 1.5s ease-in-out infinite;
+            background-color: #ef4444 !important;
+        }
+        .processing {
+            animation: spin 1s linear infinite;
+            background-color: #3b82f6 !important;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .base64-output {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .audio-chunk {
+            background: #2d3748;
+            border-left: 4px solid #4299e1;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+        }
+        .chunk-header {
+            color: #4299e1;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .chunk-data {
+            color: #a0aec0;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        .console-log {
+            background: #000;
+            color: #0f0;
+            font-family: monospace;
+            padding: 12px;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                        <i class="fas fa-stream text-purple-600 mr-2"></i>
+                        Day 21: Streaming Audio Data to Client
+                    </h1>
+                    <p class="text-gray-600">Accumulate Base64 Audio Chunks in Array - No Playback</p>
+                </div>
+                <div class="text-right">
+                    <div class="flex items-center gap-4 mb-2">
+                        <div class="flex items-center">
+                            <div id="websocket-dot" class="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
+                            <span id="websocket-status" class="text-sm text-gray-600">WebSocket: Disconnected</span>
+                        </div>
+                        <div class="flex items-center">
+                            <div id="murf-dot" class="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
+                            <span id="murf-status" class="text-sm text-gray-600">Murf: Disconnected</span>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                        Session: <span id="session-id" class="font-mono">Not connected</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Left Column: Controls & Stats -->
+            <div class="space-y-6">
+                <!-- Controls -->
+                <div class="bg-white rounded-lg shadow-md p-6 text-center">
+                    <button id="record-btn" 
+                            class="w-20 h-20 bg-purple-500 hover:bg-purple-600 text-white rounded-full text-2xl mb-4 disabled:opacity-50 transition-all duration-200">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <div>
+                        <p id="status-text" class="text-lg font-medium">Click to start recording</p>
+                        <p id="status-detail" class="text-sm text-gray-500">Stream audio data to client array</p>
+                    </div>
+                </div>
+
+                <!-- Audio Chunks Stats -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-chart-bar text-blue-600 mr-2"></i>
+                        Audio Streaming Stats
+                    </h2>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Chunks Received:</span>
+                            <span id="chunks-count" class="text-sm font-medium text-blue-600">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Total Data Size:</span>
+                            <span id="total-size" class="text-sm font-medium text-green-600">0 chars</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Array Length:</span>
+                            <span id="array-length" class="text-sm font-medium text-purple-600">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-gray-600">Last Chunk Size:</span>
+                            <span id="last-chunk-size" class="text-sm font-medium text-orange-600">0 chars</span>
+                        </div>
+                    </div>
+                    <button id="clear-array" class="mt-4 w-full bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">
+                        Clear Audio Array
+                    </button>
+                </div>
+
+                <!-- Console Acknowledgments -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-terminal text-green-600 mr-2"></i>
+                        Console Acknowledgments
+                    </h2>
+                    <div id="console-output" class="console-log">
+                        [Console Ready - Waiting for audio data...]
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Audio Chunks Display -->
+            <div class="space-y-6">
+                <!-- Accumulated Audio Chunks -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-database text-indigo-600 mr-2"></i>
+                        Accumulated Audio Chunks Array
+                        <button id="export-array" class="ml-auto text-xs bg-indigo-500 text-white px-2 py-1 rounded hover:bg-indigo-600">
+                            Export JSON
+                        </button>
+                    </h2>
+                    <div id="chunks-display" class="max-h-96 overflow-y-auto">
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-inbox text-3xl mb-2"></i>
+                            <p>No audio chunks received yet...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Transcription -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-comments text-yellow-600 mr-2"></i>
+                        Live Transcription
+                    </h2>
+                    <div id="transcription-output" class="min-h-32 p-4 bg-gray-50 rounded-lg">
+                        <div class="text-center text-gray-500">
+                            <i class="fas fa-microphone-slash text-2xl mb-2"></i>
+                            <p>Start recording to see transcription...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Live transcription -->
+                    <div id="live-transcription" class="mt-4 p-3 bg-blue-50 rounded-lg hidden">
+                        <div class="flex items-center gap-2 mb-1">
+                            <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                            <span class="text-sm font-medium text-blue-700">Live Transcription</span>
+                        </div>
+                        <p id="live-text" class="text-gray-700"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Panel -->
+        <div class="mt-6">
+            <button id="debug-toggle" class="text-sm text-gray-500 hover:text-gray-700 flex items-center">
+                <i class="fas fa-bug mr-2"></i>Show Debug Console
+            </button>
+            <div id="debug-panel" class="hidden mt-4 bg-black text-green-400 p-4 rounded-lg text-xs max-h-40 overflow-y-auto font-mono">
+                <div id="debug-content">[Debug Console Ready]<br></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class Day21StreamingAudioClient {
+            constructor() {
+                this.websocket = null;
+                this.mediaRecorder = null;
+                this.audioStream = null;
+                this.isRecording = false;
+                this.isConnected = false;
+                
+                // Audio chunks array - the main feature for Day 21
+                this.audioChunksArray = [];
+                this.chunksReceived = 0;
+                this.totalDataSize = 0;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.connectWebSocket();
+            }
+            
+            initializeElements() {
+                // Control elements
+                this.recordBtn = document.getElementById('record-btn');
+                this.statusText = document.getElementById('status-text');
+                this.statusDetail = document.getElementById('status-detail');
+                
+                // Status elements
+                this.websocketDot = document.getElementById('websocket-dot');
+                this.websocketStatus = document.getElementById('websocket-status');
+                this.murfDot = document.getElementById('murf-dot');
+                this.murfStatus = document.getElementById('murf-status');
+                this.sessionId = document.getElementById('session-id');
+                
+                // Stats elements
+                this.chunksCount = document.getElementById('chunks-count');
+                this.totalSize = document.getElementById('total-size');
+                this.arrayLength = document.getElementById('array-length');
+                this.lastChunkSize = document.getElementById('last-chunk-size');
+                this.clearArrayBtn = document.getElementById('clear-array');
+                this.exportArrayBtn = document.getElementById('export-array');
+                
+                // Display elements
+                this.chunksDisplay = document.getElementById('chunks-display');
+                this.consoleOutput = document.getElementById('console-output');
+                this.transcriptionOutput = document.getElementById('transcription-output');
+                this.liveTranscription = document.getElementById('live-transcription');
+                this.liveText = document.getElementById('live-text');
+                
+                // Debug elements
+                this.debugPanel = document.getElementById('debug-panel');
+                this.debugContent = document.getElementById('debug-content');
+            }
+            
+            setupEventListeners() {
+                this.recordBtn.addEventListener('click', () => this.toggleRecording());
+                this.clearArrayBtn.addEventListener('click', () => this.clearAudioArray());
+                this.exportArrayBtn.addEventListener('click', () => this.exportAudioArray());
+                document.getElementById('debug-toggle').addEventListener('click', () => {
+                    this.debugPanel.classList.toggle('hidden');
+                });
+            }
+            
+            connectWebSocket() {
+                const wsUrl = `ws://localhost:8000/ws`;
+                this.log(`🔌 Connecting to WebSocket: ${wsUrl}`);
+                
+                this.websocket = new WebSocket(wsUrl);
+                
+                this.websocket.onopen = () => {
+                    this.isConnected = true;
+                    this.updateWebSocketStatus(true);
+                    this.log('✅ WebSocket connected');
+                    this.updateStatus('Connected', 'Ready to stream audio data');
+                };
+                
+                this.websocket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleMessage(data);
+                    } catch (e) {
+                        // Handle plain text messages
+                        this.log(`📨 Text message: ${event.data}`);
+                        if (event.data.includes('transcription session started')) {
+                            this.updateStatus('Recording...', 'Streaming audio data to client');
+                        }
+                    }
+                };
+                
+                this.websocket.onclose = () => {
+                    this.isConnected = false;
+                    this.updateWebSocketStatus(false);
+                    this.log('❌ WebSocket disconnected');
+                    this.updateStatus('Disconnected', 'Reconnecting...');
+                    setTimeout(() => this.connectWebSocket(), 3000);
+                };
+                
+                this.websocket.onerror = (error) => {
+                    this.log(`❌ WebSocket error: ${error}`);
+                    this.updateStatus('Error', 'Connection failed');
+                };
+            }
+            
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'transcription':
+                        if (data.message_type === 'PartialTranscript') {
+                            this.showLiveTranscription(data.text);
+                        } else if (data.message_type === 'FinalTranscript') {
+                            this.hideLiveTranscription();
+                            this.addTranscription('user', data.text);
+                        }
+                        break;
+                        
+                    case 'turn_detection':
+                        this.addTranscription('system', '🔄 Turn detected - LLM processing...');
+                        break;
+                        
+                    case 'murf_connected':
+                        this.updateMurfStatus('connected');
+                        this.sessionId.textContent = data.session_id || 'Unknown';
+                        this.log('✅ Murf WebSocket connected');
+                        break;
+                        
+                    case 'murf_disconnected':
+                        this.updateMurfStatus('disconnected');
+                        this.log('❌ Murf WebSocket disconnected');
+                        break;
+                        
+                    case 'murf_audio':
+                        // This is the main feature for Day 21
+                        this.handleStreamingAudioData(data.base64_audio);
+                        break;
+                        
+                    case 'llm_chunk_sent':
+                        this.addTranscription('system', `📤 LLM chunk ${data.chunk_number} sent to Murf`);
+                        break;
+                        
+                    case 'llm_complete':
+                        this.addTranscription('system', '✅ LLM response complete - waiting for audio...');
+                        break;
+                }
+            }
+            
+            handleStreamingAudioData(base64Audio) {
+                // Day 21 Feature: Accumulate base64 chunks in array
+                this.audioChunksArray.push(base64Audio);
+                this.chunksReceived++;
+                this.totalDataSize += base64Audio.length;
+                
+                // Update stats
+                this.updateStats(base64Audio.length);
+                
+                // Console acknowledgment - Day 21 requirement
+                const acknowledgment = `✅ Audio chunk ${this.chunksReceived} received and added to array (${base64Audio.length} chars)`;
+                this.logToConsole(acknowledgment);
+                console.log(acknowledgment); // Also log to browser console
+                
+                // Display chunk in UI
+                this.displayAudioChunk(base64Audio, this.chunksReceived);
+                
+                // Debug log
+                this.log(`🎵 Streamed audio chunk ${this.chunksReceived}: ${base64Audio.length} chars → Array[${this.audioChunksArray.length}]`);
+            }
+            
+            updateStats(lastChunkSize) {
+                this.chunksCount.textContent = this.chunksReceived;
+                this.totalSize.textContent = `${this.totalDataSize.toLocaleString()} chars`;
+                this.arrayLength.textContent = this.audioChunksArray.length;
+                this.lastChunkSize.textContent = `${lastChunkSize} chars`;
+            }
+            
+            displayAudioChunk(base64Audio, chunkNumber) {
+                // Remove placeholder if it exists
+                const placeholder = this.chunksDisplay.querySelector('.text-center');
+                if (placeholder) placeholder.remove();
+                
+                const chunkDiv = document.createElement('div');
+                chunkDiv.className = 'audio-chunk';
+                
+                const timestamp = new Date().toLocaleTimeString();
+                const preview = base64Audio.substring(0, 100) + (base64Audio.length > 100 ? '...' : '');
+                
+                chunkDiv.innerHTML = `
+                    <div class="chunk-header">
+                        Chunk ${chunkNumber} - ${timestamp} (${base64Audio.length} chars)
+                    </div>
+                    <div class="chunk-data">${preview}</div>
+                `;
+                
+                this.chunksDisplay.appendChild(chunkDiv);
+                this.chunksDisplay.scrollTop = this.chunksDisplay.scrollHeight;
+            }
+            
+            logToConsole(message) {
+                const timestamp = new Date().toLocaleTimeString();
+                this.consoleOutput.textContent += `[${timestamp}] ${message}\n`;
+                this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
+            }
+            
+            clearAudioArray() {
+                this.audioChunksArray = [];
+                this.chunksReceived = 0;
+                this.totalDataSize = 0;
+                
+                this.updateStats(0);
+                this.chunksDisplay.innerHTML = `
+                    <div class="text-center text-gray-500 py-8">
+                        <i class="fas fa-inbox text-3xl mb-2"></i>
+                        <p>Audio array cleared - waiting for new chunks...</p>
+                    </div>
+                `;
+                
+                this.logToConsole('🗑️ Audio chunks array cleared');
+                this.log('🗑️ Audio chunks array cleared');
+            }
+            
+            exportAudioArray() {
+                if (this.audioChunksArray.length === 0) {
+                    alert('No audio chunks to export');
+                    return;
+                }
+                
+                const exportData = {
+                    timestamp: new Date().toISOString(),
+                    totalChunks: this.audioChunksArray.length,
+                    totalSize: this.totalDataSize,
+                    audioChunks: this.audioChunksArray
+                };
+                
+                const dataStr = JSON.stringify(exportData, null, 2);
+                const dataBlob = new Blob([dataStr], {type: 'application/json'});
+                
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(dataBlob);
+                link.download = `day21_audio_chunks_${Date.now()}.json`;
+                link.click();
+                
+                this.logToConsole(`📁 Exported ${this.audioChunksArray.length} audio chunks to JSON file`);
+                this.log(`📁 Exported audio chunks array to JSON file`);
+            }
+            
+            async toggleRecording() {
+                if (!this.isConnected) {
+                    alert('WebSocket not connected to server');
+                    return;
+                }
+                
+                if (this.isRecording) {
+                    await this.stopRecording();
+                } else {
+                    await this.startRecording();
+                }
+            }
+            
+            async startRecording() {
+                try {
+                    this.audioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: { sampleRate: 16000, channelCount: 1 } 
+                    });
+                    
+                    this.mediaRecorder = new MediaRecorder(this.audioStream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0 && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(event.data);
+                        }
+                    };
+                    
+                    this.websocket.send('start_recording');
+                    this.mediaRecorder.start(100);
+                    
+                    this.isRecording = true;
+                    this.recordBtn.classList.add('recording');
+                    this.recordBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    this.updateStatus('Recording...', 'Streaming audio data to client array');
+                    
+                    this.logToConsole('🎤 Recording started - streaming to client array');
+                    
+                } catch (error) {
+                    this.log(`❌ Recording error: ${error}`);
+                    alert('Could not access microphone');
+                }
+            }
+            
+            async stopRecording() {
+                if (this.mediaRecorder) {
+                    this.mediaRecorder.stop();
+                }
+                if (this.audioStream) {
+                    this.audioStream.getTracks().forEach(track => track.stop());
+                }
+                
+                this.websocket.send('stop_recording');
+                
+                this.isRecording = false;
+                this.recordBtn.classList.remove('recording');
+                this.recordBtn.classList.add('processing');
+                this.recordBtn.innerHTML = '<i class="fas fa-cog"></i>';
+                this.updateStatus('Processing...', 'LLM → Murf → Streaming to Array');
+                
+                this.logToConsole('🛑 Recording stopped - processing audio');
+                
+                setTimeout(() => {
+                    this.recordBtn.classList.remove('processing');
+                    this.recordBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    this.updateStatus('Ready', 'Click to record again');
+                }, 3000);
+            }
+            
+            updateWebSocketStatus(connected) {
+                if (connected) {
+                    this.websocketDot.className = 'w-3 h-3 bg-green-500 rounded-full mr-2';
+                    this.websocketStatus.textContent = 'WebSocket: Connected';
+                } else {
+                    this.websocketDot.className = 'w-3 h-3 bg-red-500 rounded-full mr-2';
+                    this.websocketStatus.textContent = 'WebSocket: Disconnected';
+                }
+            }
+            
+            updateMurfStatus(status) {
+                if (status === 'connected') {
+                    this.murfDot.className = 'w-3 h-3 bg-green-500 rounded-full mr-2';
+                    this.murfStatus.textContent = 'Murf: Connected';
+                } else {
+                    this.murfDot.className = 'w-3 h-3 bg-red-500 rounded-full mr-2';
+                    this.murfStatus.textContent = 'Murf: Disconnected';
+                }
+            }
+            
+            updateStatus(main, detail) {
+                this.statusText.textContent = main;
+                this.statusDetail.textContent = detail;
+            }
+            
+            showLiveTranscription(text) {
+                this.liveTranscription.classList.remove('hidden');
+                this.liveText.textContent = text;
+            }
+            
+            hideLiveTranscription() {
+                this.liveTranscription.classList.add('hidden');
+            }
+            
+            addTranscription(type, content) {
+                const placeholder = this.transcriptionOutput.querySelector('.text-center');
+                if (placeholder) placeholder.remove();
+                
+                const messageDiv = document.createElement('div');
+                const isUser = type === 'user';
+                const isSystem = type === 'system';
+                
+                messageDiv.className = `p-3 rounded-lg mb-2 ${
+                    isUser ? 'bg-blue-500 text-white' : 
+                    isSystem ? 'bg-yellow-100 text-yellow-800 text-sm' :
+                    'bg-gray-100 text-gray-800'
+                }`;
+                
+                const icon = isUser ? 'user' : isSystem ? 'cog' : 'robot';
+                messageDiv.innerHTML = `
+                    <div class="flex items-start gap-2">
+                        <i class="fas fa-${icon} mt-1"></i>
+                        <div class="flex-1">
+                            <p>${content}</p>
+                            <div class="text-xs opacity-70 mt-1">${new Date().toLocaleTimeString()}</div>
+                        </div>
+                    </div>
+                `;
+                
+                this.transcriptionOutput.appendChild(messageDiv);
+                this.transcriptionOutput.scrollTop = this.transcriptionOutput.scrollHeight;
+            }
+            
+            log(message) {
+                console.log(message);
+                const timestamp = new Date().toLocaleTimeString();
+                this.debugContent.innerHTML += `[${timestamp}] ${message}<br>`;
+                this.debugContent.scrollTop = this.debugContent.scrollHeight;
+            }
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new Day21StreamingAudioClient();
+        });
+    </script>
+</body>
+</html>

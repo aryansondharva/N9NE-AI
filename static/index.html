@@ -53,7 +53,7 @@
 </head>
 
 <body class="bg-gradient-to-br from-blue-50 via-white to-purple-50 text-black min-h-screen flex flex-col"
-  style="background-image: url('/static/logos/x.png'); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed;">
+  style="background-image: url('/static/logos/aryan.png'); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed;">
   <!-- Navbar -->
   <nav class="navbar bg-white/80 border-b border-gray-200 fixed w-full z-10">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -105,7 +105,7 @@
       </div>
 
       <div class="flex flex-col items-center gap-6">
-        <button onclick="handleExploreClick()"
+        <button id="launch-btn"
           class="group relative px-8 py-4 bg-black text-white font-semibold rounded-full hover:bg-gray-800 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl">
           <span class="flex items-center gap-3">
             <i class="fas fa-rocket text-lg group-hover:animate-bounce"></i>
@@ -214,20 +214,7 @@
     </div>
   </footer>
 
-  <script>
-    function showPopup() {
-      const popup = document.getElementById("popup");
-      popup.classList.remove("hidden");
-      setTimeout(() => popup.classList.add("hidden"), 1000);
-    }
-
-    function handleExploreClick() {
-      showPopup();
-      setTimeout(() => {
-        window.open('/static/explore.html', '_blank');
-      }, 1000);
-    }
-  </script>
+  <script src="static/index.js"></script>
 </body>
 
 </html>
